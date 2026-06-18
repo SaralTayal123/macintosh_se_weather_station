@@ -207,19 +207,21 @@ def is_sleep_time():
     return False
 
 
-def handle_request(req):
+def render_once():
     try:
         if is_sleep_time():
-            html = render_sleep_page()
-        else:
-            html = render_weather_page(fetch_weather())
+            return render_sleep_page()
+        return render_weather_page(fetch_weather())
     except Exception as e:
-        html = page_html(
+        return page_html(
             "Weather Error",
             "<pre>\n  Weather unavailable.\n  %s\n</pre>" % str(e)[:200],
         )
+
+
+def handle_request(req):
     return Response(
-        html,
+        render_once(),
         status=200,
         mimetype="text/html",
         headers={"Refresh": "%d; url=%s" % (REFRESH_SECONDS, REFRESH_URL)},
