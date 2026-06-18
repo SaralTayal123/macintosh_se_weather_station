@@ -1,0 +1,3 @@
+# Flask is provided by the macproxy host process, so it is not listed here.
+requests>=2.31
+# Pillow will be added when the dithering / GIF-range-bar module lands.
