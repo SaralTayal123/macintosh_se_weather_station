@@ -6,7 +6,7 @@ SE's 512×342, 1-bit screen. The vintage Mac browses to `http://wx.com/` and sho
 glanceable current-conditions + 5-day forecast page, and it **reloads itself every 60
 seconds with no keyboard or mouse attached** — boot it and it just runs.
 
-![screenshot placeholder](docs/screenshots/.gitkeep)
+![A Macintosh SE running se-weather (KeyQuencer reload macro shown)](docs/screenshots/keyquencer-macro.jpg)
 
 ```
 Open-Meteo API ──> wx extension (this repo, runs inside macproxy on a modern Mac)
@@ -150,29 +150,36 @@ file them). **Restart.** You'll see the KeyQuencer icon at startup and a KeyQuen
 
 ### 3b. The macro
 
-This single macro waits for MacWeb to come up, loads `wx.com`, then reloads it forever:
+This is the exact macro running on the SE, pasted into the Batcher's **Handle Item** (Part 3c)
+and named `weather`:
 
 ```
-Wait 15 seconds
+Wait seconds 30
 SwitchApp "MacWeb"
-Menu "Navigate" "Load URL" partial
-Type "http://wx.com/"
-Type return
-Repeat 9999 "SwitchApp \qMacWeb\q\rMenu \qView\q \qReload\q\rWait 60 seconds"
+Key enter
+Menu "Navigate" "Load Url..."
+Wait seconds 1
+Type "wx.com
+Wait seconds 1
+Key enter
+Repeat 99999 "Menu \qView\q \qReload\q\rWait 60 seconds"
 ```
 
-KeyQuencer macro-language notes (these are **not** documented online — extracted from the
-command modules' resource forks):
-- **`Repeat #iterations "literal macro"`** — inside the literal, use **`\r`** for a return
-  (command separator), **`\q`** for a `"`, **`\s`** for a `'`. **No real line breaks** inside the
-  literal.
-- **`Wait #n seconds`** — number first, then unit (`ticks`/`seconds`/`minutes`/`hours`; default ticks).
-- **`Menu "Menu" "Item" partial`** — `partial` matches `Load URL…` without typing the `…` char.
-- **`Type "text"`** types text; **`Type return`** presses Return.
-- **`SwitchApp "App"`** brings an already-open app to the front.
-- The top 5 lines run once; line 6 is the forever loop (MacWeb has **Reload** under its **View** menu).
-- We navigate via **Load URL** because this MacWeb's home-page field is read-only — so the macro
-  sets the page itself and the home page doesn't matter.
+Line by line:
+- **`Wait seconds 30`** — let MacWeb finish launching (slow on a 68000, slower if it's loading its dead default home page).
+- **`SwitchApp "MacWeb"`** — bring MacWeb to the front.
+- **`Key enter`** — dismiss any modal error dialog MacWeb popped while launching (e.g. failing to reach its dead `galaxy.einet.net` home page). **This is the fix for the "menu is restricted" error**: a modal dialog blocks the menu bar, so we clear it before touching menus.
+- **`Menu "Navigate" "Load Url..."`** — open MacWeb's Load-URL dialog.
+- **`Wait seconds 1` / `Type "wx.com` / `Wait seconds 1` / `Key enter`** — type the URL and submit it. (`wx.com` with no `http://` is fine; the 1-second waits give the dialog time to appear and accept input.)
+- **`Repeat 99999 "..."`** — the forever loop: every 60s, `Menu "View" "Reload"` reloads the page. No `SwitchApp` inside the loop is needed since MacWeb stays frontmost.
+
+KeyQuencer macro-language notes (these are **not** documented online — extracted from the command modules' resource forks):
+- **`Repeat #iterations "literal macro"`** — inside the literal, use **`\r`** for a return (command separator), **`\q`** for a `"`, **`\s`** for a `'`. **No real line breaks** inside the literal.
+- **`Wait #n seconds`** — a number with a unit (`ticks`/`seconds`/`minutes`/`hours`); both `Wait seconds 30` and `Wait 60 seconds` parse.
+- **`Type "text"`** types text; **`Key enter`** presses Enter — used here both to dismiss dialogs and to submit the Load-URL field.
+- **`Menu "Menu" "Item"`** — exact item text works (`"Load Url..."` with three dots); an optional `partial` flag matches without the `…`. Add `enforce quiet continue` to keep the macro from halting if a menu is briefly dimmed.
+- **`SwitchApp "App"`** brings an already-open app to the front. MacWeb's Reload lives under its **View** menu.
+- We navigate via **Load URL** (not the home page) because this MacWeb's home-page field is read-only.
 
 You can test the macro by assigning it a trigger key in the KeyQuencer control panel and pressing it.
 
@@ -229,6 +236,7 @@ Units are Fahrenheit / mph / inHg in `fetch_weather()`; change the `*_unit` para
 | Page loads but **never auto-refreshes** | Expected for MacWeb — that's what Part 3 (KeyQuencer) is for. |
 | KeyQuencer `Repeat: too many parameters` / `unknown keyword` | Use `\q` (not doubled quotes) for quotes and `\r` (not real newlines) inside a `Repeat` literal. `Wait` is *number then unit*. |
 | Batcher "does nothing" | The batch list item is invalid. Add a real file via **Edit → Insert Pathname…**, not a typed path. |
+| KeyQuencer **"menu is restricted"** | A modal dialog (often MacWeb's failed home-page load) is blocking the menu bar. Add **`Key enter`** before the menu commands to dismiss it, and/or increase the initial `Wait`. |
 | Reloads are slow / time out | Weak DaynaPORT Wi-Fi link (high jitter). Move the SE/Pico W closer to the router; pick 2.4 GHz channel 1/6/11. |
 
 ---
