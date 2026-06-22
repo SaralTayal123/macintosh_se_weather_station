@@ -4,3 +4,6 @@ __pycache__/
 venv/
 .venv/
 *.local.py
+
+# Local design/preview harness (kept on disk, not part of the shipped extension)
+preview/

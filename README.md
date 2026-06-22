@@ -3,43 +3,95 @@
 A self-updating **weather display for a Macintosh SE** (System 7.1), built as a
 [macproxy](https://github.com/rdmark/macproxy_classic) extension and optimized for the
 SE's 512×342, 1-bit screen. The vintage Mac browses to `http://wx.com/` and shows a
-glanceable current-conditions + 5-day forecast page, and it **reloads itself every 60
-seconds with no keyboard or mouse attached** — boot it and it just runs.
+glanceable current-conditions + 5-day-forecast page with hand-dithered 1-bit weather
+graphics, and it **reloads itself every few minutes with no keyboard or mouse attached**.
 
-![A Macintosh SE running se-weather (KeyQuencer reload macro shown)](docs/screenshots/keyquencer-macro.jpg)
+![A Macintosh SE running se-weather](docs/screenshots/se-on-mac.jpg)
 
 ```
 Open-Meteo API ──> wx extension (this repo, runs inside macproxy on a modern Mac)
-                       │  renders SE-optimized 1-bit HTML
+                       │  renders an SE-optimized page: HTML text + inline 1-bit XBM graphics
                        ▼  HTTP over Wi-Fi (DaynaPORT)
-                  Macintosh SE / MacWeb 2.0  ──reloads every 60s via KeyQuencer
+                  Macintosh SE / MacWeb 2.0  ──reloads on a timer via KeyQuencer
 ```
 
-This README is the full, reproducible build. It has three parts:
-1. **[Server side](#part-1--server-side-the-prox--weather-extension)** — the proxy + weather extension (≈15 min).
-2. **[Vintage Mac networking & browser](#part-2--vintage-mac-networking--browser)** — get the SE online and pointed at the proxy.
-3. **[Hands-off auto-reload](#part-3--hands-off-auto-reload-keyquencer)** — make it a true unattended display.
+This README is the full, reproducible build. It has four parts:
+1. **[How it works](#how-it-works)** — the architecture and the rendering pipeline.
+2. **[Server side](#part-1--server-side-the-proxy--weather-extension)** — the proxy + weather extension.
+3. **[Vintage Mac networking & browser](#part-2--vintage-mac-networking--browser)** — get the SE online and pointed at the proxy.
+4. **[Hands-off auto-reload](#part-3--hands-off-auto-reload-keyquencer)** — make it a true unattended display.
 
-> Most of Parts 2–3 are hard-won, undocumented vintage-Mac details. Read the
-> **Gotchas** call-outs; they're the things that cost the most time to discover.
+Plus a **[MacWeb 2.0 field guide](#macweb-20-field-guide-hard-won-gotchas)** — the hard-won,
+mostly-undocumented browser quirks that shaped every design decision here. If you're building
+*anything* for a 68000-era Mac browser, that section is the most valuable part of this repo.
 
 ---
 
 ## Hardware / software used
 
 - **Macintosh SE** — Motorola **68000** @ 8 MHz, **4 MB RAM**, 512×342 1-bit screen, System **7.1**.
-- **ZuluSCSI Pico W** (must be the **W** / RP2040W variant) emulating a **DaynaPORT SCSI/Link** Wi-Fi Ethernet adapter. *(BlueSCSI v2 with a Pico W works the same way.)*
+- **ZuluSCSI Pico W** (must be the **W** / RP2040W variant) emulating a **DaynaPORT SCSI/Link**
+  Wi-Fi Ethernet adapter. *(BlueSCSI v2 with a Pico W works the same way.)*
 - A **2.4 GHz Wi-Fi** network (the Pico W has no 5 GHz radio).
-- A **modern Mac/Linux machine** on the same LAN to run the proxy (kept on whenever you want the display live).
-- Software the SE needs (all free; sources in Part 2): **MacTCP**, the **DaynaPORT 7.5.3** driver, **MacWeb 2.0**, **KeyQuencer**.
+- A **modern Mac** on the same LAN to run the proxy (kept on whenever you want the display live).
+  A Mac is preferred because the renderer uses the Mac's own Geneva/Monaco fonts.
+- Software the SE needs (all free; sources in Part 2): **MacTCP**, the **DaynaPORT 7.5.3** driver,
+  **MacWeb 2.0**, **KeyQuencer**.
+
+---
+
+## How it works
+
+MacWeb 2.0 on a 68000 is *extremely* limited: **no JavaScript, no CSS, no `<canvas>`, and no
+inline GIF/JPEG** (it hands those to a helper app). The one rich thing it *can* do inline is the
+**XBM** (X BitMap) format — a 1-bit image. So the display is a deliberate **hybrid**:
+
+- **Text** (location, time, big temperature, conditions, stat labels) is plain HTML rendered by
+  the SE itself, using its built-in **Chicago / Geneva / Monaco** fonts (`<font face=…>`). This
+  is tiny over the wire and crisp on screen.
+- **Graphics that can't be done in text** — the weather icons, the cool→warm dithered 5-day
+  range bars, and the day/night temperature graph — are generated server-side as small **1-bit
+  XBM images** and embedded with `<img>`.
+
+The server-side renderer (`wx/render.py`) is the project's "dithering module": it draws into an
+8-bit buffer and thresholds to 1 bit, with **ordered (Bayer) dithering** for all shading — the
+same technique you'd bake into a GIF, here emitted as XBM so MacWeb shows it inline.
+
+### Files
+
+| File | Role |
+|---|---|
+| `wx/wx.py` | The macproxy extension. Fetches Open-Meteo, builds the hybrid HTML page, and serves each XBM component on its own URL. |
+| `wx/render.py` | The 1-bit renderer: Bayer dither, weather icons, range bars, the temperature graph, and the combined 5-day forecast image. Uses Pillow. |
+| `wx/fonts/` | Chicago / Geneva / Monaco TrueType, used by `render.py` to bake text into the images so it matches the on-screen fonts. |
+
+### Request map (all under `http://wx.com/`)
+
+| Path | Returns |
+|---|---|
+| `/` | The live hybrid HTML page (text + `<img>` references below). |
+| `/comp-icon.xbm` | Current-conditions weather icon (48 px). |
+| `/comp-forecast.xbm` | The **entire** 5-day block as one image (day names + icons + dithered bars + lo/hi). |
+| `/comp-graph.xbm` | The day/night dithered temperature graph for today. |
+| `/comp-rule.xbm`, `/comp-vrule.xbm` | Thin black divider bars (see the `<hr>` gotcha below). |
+| `/text` | A pure-ASCII, image-free fallback page (fastest, ugliest). |
+| `/pixel` | The whole screen as a single full-size image (heavy; for emulators / 68020+ Macs). |
+| `/wx.{xbm,gif,pbm,bmp}` · `/img-test` | Format probes used to discover what MacWeb can inline. |
+
+> **Why one big forecast image instead of per-row images?** MacWeb drops images when a page has
+> too many inline `<img>` tags. Collapsing the 5-day block (which was ~11 little images) into a
+> single `comp-forecast.xbm` keeps the whole page down to **5 image fetches**, comfortably under
+> the limit. See the field guide.
 
 ---
 
 ## Part 1 — Server side: the proxy + weather extension
 
-1. Install and run [macproxy_classic](https://github.com/rdmark/macproxy_classic) on the LAN machine (it's a Flask app; `./start_macproxy.sh` sets up a venv and runs it on port **5001**).
+1. Install and run [macproxy_classic](https://github.com/rdmark/macproxy_classic) on the LAN
+   machine (it's a Flask app; `./start_macproxy.sh` sets up a venv and runs it on port **5001**).
 
-2. Drop this extension into macproxy's `extensions/` folder. A **symlink** keeps it editable from this repo:
+2. Drop this extension into macproxy's `extensions/` folder. A **symlink** keeps it editable
+   from this repo:
    ```sh
    ln -s /path/to/se-weather/wx  /path/to/macproxy_classic/extensions/wx
    ```
@@ -49,31 +101,34 @@ This README is the full, reproducible build. It has three parts:
    ENABLED_EXTENSIONS = [ ..., "wx" ]
    ```
 
-4. Set your location and preferences at the top of [`wx/wx.py`](wx/wx.py):
+4. Install Pillow into macproxy's venv (the renderer needs it):
+   ```sh
+   /path/to/macproxy_classic/venv/bin/pip install Pillow
+   ```
+
+5. Set your location and preferences at the top of [`wx/wx.py`](wx/wx.py):
    ```python
    LATITUDE      = 37.4419
    LONGITUDE     = -122.1430
    LOCATION_NAME = "PALO ALTO, CA"
    TIMEZONE      = "America/Los_Angeles"
-   REFRESH_SECONDS = 60        # also bump the KeyQuencer Wait to match (Part 3)
-   SLEEP_ENABLED   = False     # optional overnight/daytime blank-screen windows
    ```
-   Data comes from [Open-Meteo](https://open-meteo.com) — free, no API key, includes
-   temperature, humidity, wind, **visibility**, pressure, and a 5-day forecast.
+   Data comes from [Open-Meteo](https://open-meteo.com) — free, no API key. The extension caches
+   each fetch for 120 s, so one page reload (which pulls several images) makes a single API call.
 
-5. Restart macproxy and sanity-check from the LAN machine:
+6. Restart macproxy and sanity-check from the LAN machine:
    ```sh
-   curl -x http://localhost:5001 http://wx.com/
+   curl -x http://localhost:5001 http://wx.com/            # the HTML page
+   curl -x http://localhost:5001 http://wx.com/comp-graph.xbm | head   # an XBM
    ```
-   You should get the weather HTML back.
 
-> **Gotcha — the domain must use a real TLD.** The extension's `DOMAIN` is **`wx.com`**,
-> not something like `wx.box`. MacWeb 2.0 refuses to treat made-up TLDs as valid URLs and
-> mangles them into a broken `http://<proxy-ip>/http://wx.box/` request. `wx.com` is a real
-> TLD the SE never needs to visit for real, so the extension safely shadows it.
+> **Gotcha — the domain must use a real TLD.** The extension's `DOMAIN` is **`wx.com`**, not
+> something like `wx.box`. MacWeb 2.0 refuses to treat made-up TLDs as valid URLs and mangles
+> them into a broken `http://<proxy-ip>/http://wx.box/` request. `wx.com` is a real TLD the SE
+> never needs to visit for real, so the extension safely shadows it.
 
-The page is a Flask `Response` returned straight from the extension, so macproxy passes it
-through **without** its usual tag-stripping — the hand-built 1-bit layout stays intact.
+The page is returned as a Flask `Response`, so macproxy passes it through **without** its usual
+tag-stripping/image-reprocessing — the hand-built 1-bit layout and XBM bytes stay intact.
 
 ---
 
@@ -162,7 +217,7 @@ Wait seconds 1
 Type "wx.com
 Wait seconds 1
 Key enter
-Repeat 99999 "Menu \qView\q \qReload\q\rWait 60 seconds"
+Repeat 99999 "Menu \qView\q \qReload\q\rWait 180 seconds"
 ```
 
 Line by line:
@@ -171,7 +226,7 @@ Line by line:
 - **`Key enter`** — dismiss any modal error dialog MacWeb popped while launching (e.g. failing to reach its dead `galaxy.einet.net` home page). **This is the fix for the "menu is restricted" error**: a modal dialog blocks the menu bar, so we clear it before touching menus.
 - **`Menu "Navigate" "Load Url..."`** — open MacWeb's Load-URL dialog.
 - **`Wait seconds 1` / `Type "wx.com` / `Wait seconds 1` / `Key enter`** — type the URL and submit it. (`wx.com` with no `http://` is fine; the 1-second waits give the dialog time to appear and accept input.)
-- **`Repeat 99999 "..."`** — the forever loop: every 60s, `Menu "View" "Reload"` reloads the page. No `SwitchApp` inside the loop is needed since MacWeb stays frontmost.
+- **`Repeat 99999 "..."`** — the forever loop: every 180s, `Menu "View" "Reload"` reloads the page. No `SwitchApp` inside the loop is needed since MacWeb stays frontmost. (Use a comfortable interval — a full hybrid reload pulls several images over a slow link.)
 
 KeyQuencer macro-language notes (these are **not** documented online — extracted from the command modules' resource forks):
 - **`Repeat #iterations "literal macro"`** — inside the literal, use **`\r`** for a return (command separator), **`\q`** for a `"`, **`\s`** for a `'`. **No real line breaks** inside the literal.
@@ -209,7 +264,27 @@ Put aliases of both apps in the **Startup Items** folder so a cold boot needs no
 3. **Restart.**
 
 Boot sequence with nothing attached:
-**power on → MacWeb auto-launches → Batcher auto-launches → its macro loads `wx.com` → reloads every 60 s, forever.**
+**power on → MacWeb auto-launches → Batcher auto-launches → its macro loads `wx.com` → reloads on the timer, forever.**
+
+---
+
+## MacWeb 2.0 field guide (hard-won gotchas)
+
+Everything below was discovered by trial on a real 68000 SE. None of it is documented online.
+If you build for this browser, save yourself the days these cost.
+
+| Symptom | Cause & fix |
+|---|---|
+| **No inline GIF/JPEG.** Clicking an image triggers a "helper application (JPEGView)" prompt. | MacWeb only shows GIFs via an external helper app, never inline. **XBM is the only format it renders inline** (1-bit). PBM and BMP don't render either. So all graphics here are XBM. *(Netscape/Mosaic do inline images but need a 68020 — they won't run on the SE's 68000.)* |
+| **Degree sign shows as `¡` / `j`.** | MacWeb decodes the page as **Latin-1**, not Mac Roman — regardless of the declared charset. Encode the response **Latin-1** and use `°` = `0xB0`. (Sending Mac Roman's `0xA1` renders as `¡`.) |
+| **Whole page intermittently turns black, images still visible.** | The stock-2.0 **"blackout bug."** Setting any `bgcolor` on `<body>` triggers it. **Fix: no `bgcolor`.** (The community *MacWeb 2.0c+* build patches this; stock 2.0 does not.) |
+| **An image silently fails to load — usually the last/largest one.** | MacWeb has a **practical limit on inline images per page.** Going from ~9 to ~14 images dropped the temperature graph (last on the page); more failures blank everything below the header. **Fix: minimize image count** — here the entire 5-day block is one combined `comp-forecast.xbm`, keeping the page at 5 image fetches. |
+| **Entire page renders blank (white).** | MacWeb's table parser chokes on **`<center>` wrapping a `<table>`** mixed with other content, and fails the *whole* page. **Fix: center with the `align="center"` attribute** on `<table>`/`<td>`, never `<center>` around a table. (A `<center>` around inline content/images is fine.) |
+| **Huge vertical gaps around dividers.** | `<hr>` forces large, uncontrollable top/bottom margins (and MacWeb ignores CSS). **Fix: replace `<hr>` with a thin 2 px solid-black image** (`comp-rule.xbm`) used inline, wrapped in `<font size="1">` so its line-box is minimal. The vertical divider between columns is the same trick (`comp-vrule.xbm`). |
+| **Right edge clipped / horizontal scrollbar appears.** | `width="100%"` means the full 512 px, but the vertical scrollbar steals ~15 px, pushing the rightmost column off-screen. **Fix: a fixed page width** (`PAGE_W = 474`) instead of `100%`. |
+| **Spacer table cells collapse.** | Empty `<td width="…">` gutters get collapsed, so you can't pad columns that way. **Fix: center the column content** (`align="center"`) to get even padding off the divider. |
+| **No auto-refresh.** | MacWeb ignores `<meta refresh>` *and* the `Refresh:` header. Auto-reload must be external — see Part 3 (KeyQuencer). |
+| **Made-up TLDs produce a doubled, broken URL + 502.** | Use a real TLD (`wx.com`), which the proxy shadows. |
 
 ---
 
@@ -218,33 +293,22 @@ Boot sequence with nothing attached:
 | Setting | Meaning |
 |---|---|
 | `LATITUDE` / `LONGITUDE` / `LOCATION_NAME` / `TIMEZONE` | Your location (Open-Meteo). |
+| `PAGE_W` | Fixed page width in px (default 474) — 512 minus the scrollbar/margin. |
 | `REFRESH_SECONDS` | Page meta-refresh hint (cosmetic for MacWeb; real cadence is the KeyQuencer `Wait`). |
-| `JITTER_ENABLED` | Nudge the layout a few chars each reload to reduce CRT burn-in. |
-| `SLEEP_ENABLED` + `SLEEP_WINDOWS` | Serve a near-black "sleep" page during set hours (off by default). |
+| `DISPLAY_FORMAT` | Image format for the heavy full-screen `/pixel` view (`xbm`). The live page uses the hybrid, not this. |
+| `_CACHE_TTL` | Seconds to cache one Open-Meteo response so a reload makes a single API call. |
 
 Units are Fahrenheit / mph / inHg in `fetch_weather()`; change the `*_unit` params there for metric.
 
 ---
 
-## Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| MacTCP shows only **LocalTalk** | DaynaPORT installed via Easy Install. Re-run installer → **Custom → DaynaPORT SCSI/Link**. |
-| `wx.box`/made-up domain gives a doubled URL + 502 | MacWeb mangles non-real TLDs. Use a real TLD (`wx.com`). |
-| MacWeb error **1003** / "can't access" | Connection failed — proxy `Port` field empty (defaults to 80), proxy IP changed, or weak Wi-Fi. Check the **Port 5001** field and the proxy machine's IP. |
-| Page loads but **never auto-refreshes** | Expected for MacWeb — that's what Part 3 (KeyQuencer) is for. |
-| KeyQuencer `Repeat: too many parameters` / `unknown keyword` | Use `\q` (not doubled quotes) for quotes and `\r` (not real newlines) inside a `Repeat` literal. `Wait` is *number then unit*. |
-| Batcher "does nothing" | The batch list item is invalid. Add a real file via **Edit → Insert Pathname…**, not a typed path. |
-| KeyQuencer **"menu is restricted"** | A modal dialog (often MacWeb's failed home-page load) is blocking the menu bar. Add **`Key enter`** before the menu commands to dismiss it, and/or increase the initial `Wait`. |
-| Reloads are slow / time out | Weak DaynaPORT Wi-Fi link (high jitter). Move the SE/Pico W closer to the router; pick 2.4 GHz channel 1/6/11. |
-
----
-
 ## Roadmap
 
-- Generated 1-bit GIF temperature-range bars with a cool→warm dither gradient (replacing the
-  ASCII bars), plus tiny dithered weather icons — via a custom dithering module.
+- **Done:** 1-bit dithered weather icons, cool→warm dithered temperature range bars, and a
+  day/night dithered temperature graph — all generated server-side (`render.py`) and served as
+  inline XBM. This was the original "custom dithering module" goal.
+- Possible next: Atkinson dithering option; a dithered regional temperature map; per-condition
+  icon refinements.
 
 ## License & credits
 
@@ -252,3 +316,5 @@ Units are Fahrenheit / mph / inHg in `fetch_weather()`; change the `*_unit` para
 Runs with [macproxy_classic](https://github.com/rdmark/macproxy_classic) (GPLv3; this extension
 is a separate work). Weather data © [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
 Auto-reload uses [KeyQuencer](https://macintoshgarden.org/apps/keyquencer) by Alessandro Levi Montalcini.
+The **Chicago** TrueType is a free recreation of Susan Kare's typeface; **Geneva** and **Monaco**
+are Apple's system fonts, bundled here for the renderer.
