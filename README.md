@@ -132,6 +132,42 @@ tag-stripping/image-reprocessing — the hand-built 1-bit layout and XBM bytes s
 
 ---
 
+### Running on a Raspberry Pi (always-on host)
+
+A Pi is the natural always-on home for the proxy. Two scripts in [`deploy/`](deploy/) handle it:
+
+```sh
+# on the Pi (Raspberry Pi OS / Debian), as your normal user:
+git clone <your se-weather repo>
+cd se-weather
+./deploy/provision-pi.sh
+```
+
+`provision-pi.sh` is idempotent and does the whole setup:
+1. installs system packages (python3/venv + Pillow's libs incl. **libfreetype6** for TrueType),
+2. clones **macproxy_classic** alongside this repo,
+3. symlinks `wx/` into `macproxy_classic/extensions/` and enables it in `config.py`,
+4. creates the venv and installs all dependencies (and smoke-tests the renderer),
+5. installs and starts a **systemd service** (`macproxy-wx`) that **starts on boot and restarts
+   on crash** (`Restart=always`).
+
+Manage it with:
+```sh
+sudo systemctl status macproxy-wx     # is it running?
+journalctl -u macproxy-wx -f          # live logs
+sudo systemctl restart macproxy-wx    # restart
+```
+
+The bundled Chicago/Geneva/Monaco fonts mean the renderer works on the Pi's Linux with no extra
+font setup. The systemd unit is also provided as a reference at
+[`deploy/macproxy-wx.service`](deploy/macproxy-wx.service).
+
+> **After moving the proxy to the Pi:** give the Pi a **static/reserved IP**, and update the SE's
+> MacWeb proxy **Host** to that IP (Part 2d). MacWeb hard-codes the proxy address, so a changing
+> DHCP lease silently breaks the display.
+
+---
+
 ## Part 2 — Vintage Mac networking & browser
 
 ### 2a. ZuluSCSI DaynaPORT Wi-Fi

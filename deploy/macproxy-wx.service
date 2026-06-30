@@ -1,0 +1,28 @@
+# Reference systemd unit for running macproxy + the se-weather (wx) extension.
+#
+# provision-pi.sh generates this automatically with your real paths/user. This copy
+# is for reference or manual install. Replace __USER__ and __MACPROXY_DIR__, then:
+#
+#   sudo cp deploy/macproxy-wx.service /etc/systemd/system/macproxy-wx.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now macproxy-wx
+#
+[Unit]
+Description=Macproxy (se-weather) for Macintosh SE
+# Wait for the network so the first weather fetch succeeds at boot.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__MACPROXY_DIR__
+# Run proxy.py directly from the venv (binds 0.0.0.0:5001 by default).
+ExecStart=__MACPROXY_DIR__/venv/bin/python -u proxy.py --port 5001
+# Always bring it back — on crash, on clean exit, and on boot.
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
