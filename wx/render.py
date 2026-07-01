@@ -397,13 +397,17 @@ def comp_bar(day, wk_min, wk_max, bar_w=144, bar_h=13):
     return img.crop((0, 0, bar_w, bar_h)).convert("1", dither=Image.NONE)
 
 
-def comp_graph(wx, w=300, h=58):
+# lpad = built-in blank left margin so these images sit off the vertical divider
+LPAD = 16
+
+
+def comp_graph(wx, w=300, h=58, lpad=LPAD):
     img, px = _canvas()
-    temp_graph(px, 0, 0, w, h, wx)
+    temp_graph(px, lpad, 0, w - lpad, h, wx)
     return img.crop((0, 0, w, h)).convert("1", dither=Image.NONE)
 
 
-def comp_forecast(wx, w=300, rowh=24):
+def comp_forecast(wx, w=300, rowh=24, lpad=LPAD):
     """The ENTIRE 5-day block as ONE image: day name + condition icon + low + cool->warm
     dithered range bar + high, per row. Collapsing ~11 little images into one keeps the
     page under MacWeb's inline-image limit (the cause of the dropped graph)."""
@@ -414,12 +418,13 @@ def comp_forecast(wx, w=300, rowh=24):
     f_day = _font("Chicago", 12)
     f_num = _font("Monaco", 13)
     bar_w, bar_h = 144, 13
-    x_icon, x_lo_r, x_bar = 52, 100, 104
+    x_day = 2 + lpad
+    x_icon, x_lo_r, x_bar = 52 + lpad, 100 + lpad, 104 + lpad
     x_hi = x_bar + bar_w + 6
     for i, d in enumerate(rows):
         y = i * rowh
         cy = y + rowh // 2
-        draw.text((2, cy), d["d"], font=f_day, fill=BLACK, anchor="lm")
+        draw.text((x_day, cy), d["d"], font=f_day, fill=BLACK, anchor="lm")
         draw_icon(px, d["icon"], x_icon, y + (rowh - 24) // 2, 1)
         draw.text((x_lo_r, cy), "%d°" % d["lo"], font=f_num, fill=BLACK, anchor="rm")
         range_bar(px, x_bar, y + (rowh - bar_h) // 2, d, wx["wkMin"], wx["wkMax"],
@@ -428,11 +433,14 @@ def comp_forecast(wx, w=300, rowh=24):
     return img.crop((0, 0, w, h)).convert("1", dither=Image.NONE)
 
 
-def comp_rule(w=504, h=2):
-    """A solid black bar — a tight replacement for MacWeb's spacious <hr>, which
-    forces large uncontrollable vertical margins. As an inline <img> it adds almost
-    no vertical space."""
-    return Image.new("1", (w, h), 0)   # all black (image_bytes flips for XBM polarity)
+def comp_rule(w=504, h=2, loff=0):
+    """A solid black bar — a tight replacement for MacWeb's spacious <hr>, which forces
+    large uncontrollable vertical margins. `loff` leaves that many blank pixels on the
+    left (used to nudge a divider right / align it with padded content)."""
+    img = Image.new("1", (w, h), 1)    # white
+    if loff < w:
+        ImageDraw.Draw(img).rectangle([loff, 0, w - 1, h - 1], fill=0)  # black bar
+    return img
 
 
 def comp_vrule(h=232, w=2):

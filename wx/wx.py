@@ -391,30 +391,37 @@ def build_hybrid(wx):
     cool->warm 5-day bars, today temp graph). ~15-25KB total vs 110KB for a full image."""
     b = "?t=%d" % int(datetime.datetime.now().timestamp())   # cache-bust each reload
 
-    # tight dividers: wrap rule img in size=1 so its line box adds minimal height
-    def rule(w):
-        return ('<font size="1"><img src="http://wx.com/comp-rule.xbm%s" width="%d" '
-                'height="2" border="0"></font>' % (b, w))
+    # tight dividers: wrap rule img in size=1 so its line box adds minimal height.
+    # Each width gets a DISTINCT url (&w=) rendered natively — MacWeb won't re-draw
+    # the same cached image at a different size, so reusing one url drops the extras.
+    def rule(w, loff=0):
+        return ('<font size="1"><img src="http://wx.com/comp-rule.xbm%s&w=%d&l=%d" width="%d" '
+                'height="2" border="0"></font>' % (b, w, loff, w))
 
     # Centering uses align="center" attributes (NOT <center> wrapping tables, which
     # can make MacWeb render the whole page blank). Tables carry align="center".
     left = (
         '<center>'
         '<img src="http://wx.com/comp-icon.xbm%s" width="48" height="48" border="0"><br>'
-        '<font face="Chicago" size="6">%d%s</font><br>'
+        '<font face="Chicago" size="7">%d%s</font><br>'
         '<font face="Chicago" size="4">%s</font><br>'
-        '%s</center>'
-        '<table align="center" border="0" cellspacing="0" cellpadding="0">%s</table>'
-        % (b, wx["temp"], DEG, wx["cond"], rule(150), _stats_rows(wx))
+        '%s'   # divider (centered, nudged right a few px to sit over the metrics)
+        '<font size="2"><br></font>'   # a smidge of space before the metrics
+        '</center>'
+        # 86%% + align=center insets the metrics so labels clear the screen edge and
+        # values clear the vertical divider. (align attr, NOT <center> around a table.)
+        '<table width="86%%" align="center" border="0" cellspacing="0" cellpadding="0">%s</table>'
+        % (b, wx["temp"], DEG, wx["cond"], rule(114, loff=8), _stats_rows(wx))
     )
     # the entire 5-day block is ONE image (comp-forecast) — keeps the page well under
     # MacWeb's inline-image limit so the graph stops getting dropped.
+    # forecast image and graph are adjacent (no divider between them, no label after)
+    # so the graph fills the bottom without triggering the scrollbar.
     right = (
-        '<font face="Chicago" size="3">FIVE-DAY OUTLOOK</font><br>%s'
-        '<img src="http://wx.com/comp-forecast.xbm%s" width="300" height="120" border="0">%s'
-        '<img src="http://wx.com/comp-graph.xbm%s" width="300" height="58" border="0"><br>'
-        '<font face="Chicago" size="2">TODAY  %d%s / %d%s</font>'
-        % (rule(300), b, rule(300), b, wx["loTemp"], DEG, wx["hiTemp"], DEG)
+        '<b><font face="Chicago" size="3">FIVE-DAY OUTLOOK</font></b><br>%s'
+        '<img src="http://wx.com/comp-forecast.xbm%s" width="300" height="120" border="0">'
+        '<img src="http://wx.com/comp-graph.xbm%s" width="300" height="58" border="0">'
+        % (rule(300, loff=16), b, b)
     )
     vrule = ('<font size="1"><img src="http://wx.com/comp-vrule.xbm%s" width="2" '
              'height="200" border="0"></font>' % b)
@@ -425,8 +432,8 @@ def build_hybrid(wx):
     body = (
         '<body>'
         '<table width="%d" border="0" cellspacing="0" cellpadding="0"><tr>'
-        '<td><font face="Chicago" size="3">%s</font></td>'
-        '<td align="right"><font face="Chicago" size="3">%s</font></td>'
+        '<td><b><font face="Chicago" size="3">%s</font></b></td>'
+        '<td align="right"><b><font face="Chicago" size="3">%s</font></b></td>'
         '</tr></table>%s'
         '<table width="%d" border="0" cellspacing="0" cellpadding="0"><tr>'
         '<td valign="top" width="28%%">%s</td>'
@@ -439,7 +446,7 @@ def build_hybrid(wx):
 
 
 def _stats_rows(wx):
-    """Centered two-column table: label left, value right, larger Geneva text."""
+    """Full-width rows: label hard-left, value hard-right (spread across the column)."""
     stats = [
         ("Feels like", "%d%s" % (wx["feels"], DEG)),
         ("UV index", str(wx["uv"])),
@@ -449,8 +456,8 @@ def _stats_rows(wx):
         ("Sunset", wx["sun"]["set"]),
     ]
     return "".join(
-        '<tr><td><font face="Geneva" size="3">%s</font></td>'
-        '<td align="right"><font face="Geneva" size="3">&nbsp;&nbsp;&nbsp;%s</font></td></tr>'
+        '<tr><td align="left"><font face="Geneva" size="3">%s</font></td>'
+        '<td align="right"><font face="Geneva" size="3">%s</font></td></tr>'
         % (lab, val) for lab, val in stats
     )
 
@@ -490,7 +497,12 @@ def handle_request(req):
             render = _load_render()
             which = mc.group(1)
             if which == "rule":
-                img = render.comp_rule()       # static; no weather fetch needed
+                try:
+                    w = max(1, min(512, int(req.args.get("w", 504))))
+                    loff = max(0, min(w, int(req.args.get("l", 0))))
+                except (TypeError, ValueError):
+                    w, loff = 504, 0
+                img = render.comp_rule(w, loff=loff)   # native width so MacWeb won't rescale
             elif which == "vrule":
                 img = render.comp_vrule()      # static vertical divider
             else:
