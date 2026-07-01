@@ -167,25 +167,34 @@ def main():
     toast, toast_t = "", 0.0
     net_ok, net_checked = None, 0.0
     svc_ok, svc_checked = None, 0.0
+    quit_armed = 0.0
     clock = pygame.time.Clock()
     running = True
     while running:
         now = time.time()
         for e in pygame.event.get():
+            # Kiosk: ignore window-close events; only ESC or a deliberate corner
+            # DOUBLE-tap exits (a touchscreen's stray/ghost taps must not kill it).
             if e.type == pygame.QUIT:
-                running = False
+                print("ignoring QUIT event (kiosk mode)", flush=True)
             elif e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                print("exit: ESC key", flush=True)
                 running = False
             elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.FINGERDOWN):
                 pos = (int(e.x * W), int(e.y * H)) if e.type == pygame.FINGERDOWN else e.pos
                 if quit_rect.collidepoint(pos):
-                    running = False
-                for b in buttons:
-                    if b.rect.collidepoint(pos):
-                        b.flash = now
-                        toast, toast_t = b.action(), now
-                        if b.action is act_testnet:
-                            net_ok, net_checked = internet_up(), now
+                    if now - quit_armed < 3.0:
+                        print("exit: corner double-tap", flush=True)
+                        running = False
+                    else:
+                        quit_armed, toast, toast_t = now, "tap corner again to exit", now
+                else:
+                    for b in buttons:
+                        if b.rect.collidepoint(pos):
+                            b.flash = now
+                            toast, toast_t = b.action(), now
+                            if b.action is act_testnet:
+                                net_ok, net_checked = internet_up(), now
 
         # periodic background checks (cheap, throttled)
         if now - net_checked > 20:
