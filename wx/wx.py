@@ -84,13 +84,54 @@ def compass(deg):
 _CACHE_TTL = 120  # seconds
 _cache = {"ts": 0.0, "data": None}
 
+# --- status file (read by the Pi touchscreen UI) -----------------------------
+# The proxy is the thing the SE talks to, so it's the natural place to record
+# "when did the Mac last ping". We also expose a refresh-flag: the UI touches the
+# flag file to force the next fetch to bypass the cache.
+import os as _os
+import time as _time
+STATUS_FILE = _os.environ.get("WX_STATUS_FILE", "/tmp/wx-status.json")
+REFRESH_FLAG = _os.environ.get("WX_REFRESH_FLAG", "/tmp/wx-refresh.flag")
+_status = {"last_seen": 0.0, "count": 0, "temp": None, "cond": None,
+           "fetch_ok": None, "last_fetch": 0.0, "started": _time.time()}
+
+
+def _write_status():
+    try:
+        import json
+        tmp = STATUS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(_status, fh)
+        _os.replace(tmp, STATUS_FILE)
+    except Exception:
+        pass  # status is best-effort; never let it break request handling
+
+
+def _note_request():
+    _status["last_seen"] = _time.time()
+    _status["count"] += 1
+    _write_status()
+
 
 def fetch_weather():
-    import time
-    now = time.time()
-    if _cache["data"] is not None and (now - _cache["ts"]) < _CACHE_TTL:
+    now = _time.time()
+    # UI-triggered force refresh: bypass the cache if the flag is newer than it
+    forced = False
+    try:
+        if _os.path.exists(REFRESH_FLAG) and _os.path.getmtime(REFRESH_FLAG) > _cache["ts"]:
+            forced = True
+    except OSError:
+        pass
+    if not forced and _cache["data"] is not None and (now - _cache["ts"]) < _CACHE_TTL:
         return _cache["data"]
-    data = _fetch_weather_uncached()
+    try:
+        data = _fetch_weather_uncached()
+        _status["fetch_ok"] = True
+    except Exception:
+        _status["fetch_ok"] = False
+        _write_status()
+        raise
+    _status["last_fetch"] = now
     _cache["data"] = data
     _cache["ts"] = now
     return data
@@ -150,7 +191,7 @@ def normalize(data):
     wk_min = min(d["lo"] for d in days)
     wk_max = max(d["hi"] for d in days)
 
-    return {
+    out = {
         "loc": LOCATION_NAME,
         "dateline": now.strftime("%a %b %-d  %-I:%M %p").upper(),
         "temp": round(cur["temperature_2m"]),
@@ -167,6 +208,10 @@ def normalize(data):
         "loTemp": lo_t, "loHour": hourly.index(lo_t),
         "hourly": hourly, "days": days, "wkMin": wk_min, "wkMax": wk_max,
     }
+    _status["temp"] = out["temp"]
+    _status["cond"] = out["cond"]
+    _write_status()
+    return out
 
 
 # ---- ASCII pieces for the HTML page ----------------------------------------
@@ -437,6 +482,7 @@ def _load_render():
 def handle_request(req):
     import re
     path = (req.path or "/").rstrip("/") or "/"
+    _note_request()   # the SE just talked to us — record it for the Pi status UI
     try:
         # component XBMs for the hybrid page: current icon, whole 5-day forecast, graph
         mc = re.match(r"^/comp-(icon|graph|forecast|rule|vrule)\.xbm$", path)

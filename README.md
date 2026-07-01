@@ -162,6 +162,38 @@ The bundled Chicago/Geneva/Monaco fonts mean the renderer works on the Pi's Linu
 font setup. The systemd unit is also provided as a reference at
 [`deploy/macproxy-wx.service`](deploy/macproxy-wx.service).
 
+#### Optional: touchscreen status panel
+
+If the Pi has a small touchscreen (~4.3"), [`statusui/status_app.py`](statusui/status_app.py)
+is a lightweight **pygame** panel that shows **how long since the Macintosh SE last pinged the
+proxy** (color-coded), the proxy service state, internet connectivity, the Pi's `IP:PORT`, the
+request count, and the current temperature — plus touch buttons: **Restart Proxy**, **Refresh
+Weather** (clears the 120 s cache), and **Test Network**.
+
+It works because the proxy is the thing the SE talks to: the extension writes a small
+`/tmp/wx-status.json` on every request, and the panel just reads it (it never imports the proxy).
+
+On **Raspberry Pi OS Desktop**:
+```sh
+./deploy/provision-statusui.sh     # installs pygame, a sudo rule, and the autostart entry
+```
+It launches the panel immediately (if run from the desktop) and auto-starts it on every desktop
+login. A small wrapper (`statusui/run-panel.sh`) **restarts the app if it crashes** and logs to
+`~/se-weather-status.log` — check that file if the screen stays blank.
+
+> **Why a desktop autostart and not a systemd service?** The panel is a GUI app: it needs the
+> desktop session's display environment (`DISPLAY`/`WAYLAND_DISPLAY`). A desktop autostart runs
+> *inside* that session so the display "just works", whereas a plain systemd service starts
+> before/outside the session and typically can't open the screen. The wrapper gives it the
+> restart-on-crash resilience you'd otherwise want a service for.
+
+To try/debug it manually on the touchscreen's own terminal (not over SSH — it needs the display):
+```sh
+python3 statusui/status_app.py     # prints why it can't open the display, if it can't
+tail -f ~/se-weather-status.log    # what the autostarted copy is doing
+```
+Env vars `WX_STATUS_FILE`, `WX_REFRESH_FLAG`, `WX_SERVICE`, `WX_PORT` override the defaults.
+
 > **After moving the proxy to the Pi:** give the Pi a **static/reserved IP**, and update the SE's
 > MacWeb proxy **Host** to that IP (Part 2d). MacWeb hard-codes the proxy address, so a changing
 > DHCP lease silently breaks the display.
